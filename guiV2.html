@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<!-- Include EventEmitter2, roslib.js, and nipplejs from CDN -->
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/eventemitter2@6.4.9/lib/eventemitter2.min.js"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/nipplejs@0.8.1/dist/nipplejs.min.js"></script>
+<style>
+  .joystick-container {
+    width: 200px;
+    height: 200px;
+    position: relative;
+    margin: 0 auto;
+  }
+  .button-container {
+    position: relative;
+    width: 400px;
+    height: 400px;
+    margin: 20px auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .direction-button {
+    width: 80px;
+    height: 80px;
+    margin: 5px;
+    font-size: 36px;
+    text-align: center;
+    line-height: 80px;
+    cursor: pointer;
+    position: absolute;
+    background-color: blue; /* Same color as joystick */
+    color: white;
+    border: none;
+    border-radius: 10px;
+    box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    user-select: none;
+  }
+  .up-button { top: 10%; left: 50%; transform: translate(-50%, -50%); }
+  .down-button { bottom: 10%; left: 50%; transform: translate(-50%, 50%); }
+  .left-button { left: 10%; top: 50%; transform: translate(-50%, -50%); }
+  .right-button { right: 10%; top: 50%; transform: translate(50%, -50%); }
+</style>
+<script type="text/javascript">
+  window.onload = function() {
+    // Connecting to ROS
+    var ros = new ROSLIB.Ros({
+      url: 'ws://localhost:9090'
+    });
+
+    ros.on('connection', function() {
+      console.log('Connected to websocket server.');
+      document.getElementById("status").innerText = "Connected";
+
+      // Create a subscriber for the counter topic
+      var counterListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/counter',
+        messageType: 'std_msgs/Int32'
+      });
+
+      counterListener.subscribe(function(message) {
+        console.log('Received message on /counter:', message.data);
+        document.getElementById("counter").innerText = message.data;
+      });
+
+      // Create a subscriber for the range topic
+      var rangeListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/mirte/distance/left_front',
+        messageType: 'sensor_msgs/Range'
+      });
+
+      rangeListener.subscribe(function(message) {
+        console.log('Received message on /range:', message.range);
+        document.getElementById("range").innerText = message.range.toFixed(2);
+      });
+
+      // Create a publisher for the cmd_vel topic
+      var cmdVelPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/mobile_base_controller/cmd_vel',
+        messageType: 'geometry_msgs/Twist'
+      });
+
+      // Function to publish a Twist message
+      function publishTwist(linearX, angularZ) {
+        var twist = new ROSLIB.Message({
+          linear: {
+            x: linearX,
+            y: 0.0,
+            z: 0.0
+          },
+          angular: {
+            x: 0.0,
+            y: 0.0,
+            z: angularZ
+          }
+        });
+        cmdVelPublisher.publish(twist);
+      }
+
+      // Create the joystick
+      var joystickManager = nipplejs.create({
+        zone: document.getElementById('joystick'),
+        mode: 'static',
+        position: { left: '50%', top: '50%' },
+        color: 'blue',
+        size: 150,
+      });
+
+      // Joystick move event
+      joystickManager.on('move', function (evt, data) {
+        var distance = data.distance * 0.1; // Scale appropriately
+        var angle = data.angle.degree - 90; // Convert to Cartesian angle
+        if (angle < 0) angle += 360; // Normalize angle
+
+        var radian = angle * (Math.PI / 180);
+        var linearX = Math.cos(radian) * distance * 0.1;
+        var angularZ = Math.sin(radian) * distance * 100;
+
+        publishTwist(linearX, angularZ);
+      });
+
+      // Joystick end event
+      joystickManager.on('end', function () {
+        publishTwist(0, 0); // Stop the robot
+      });
+
+      // Button press events for strict directional control
+      function addDirectionButtonEvents(buttonId, linearX, angularZ) {
+        var button = document.getElementById(buttonId);
+        button.addEventListener('mousedown', function() {
+          publishTwist(linearX, angularZ);
+        });
+        button.addEventListener('mouseup', function() {
+          publishTwist(0, 0);
+        });
+        button.addEventListener('mouseleave', function() { // Handle case when mouse leaves the button
+          publishTwist(0, 0);
+        });
+        button.addEventListener('touchstart', function(e) {
+          e.preventDefault();
+          publishTwist(linearX, angularZ);
+        });
+        button.addEventListener('touchend', function(e) {
+          e.preventDefault();
+          publishTwist(0, 0);
+        });
+      }
+
+      addDirectionButtonEvents('up-button', 0.5, 0);
+      addDirectionButtonEvents('down-button', -0.5, 0);
+      addDirectionButtonEvents('left-button', 0, 0.5);
+      addDirectionButtonEvents('right-button', 0, -0.5);
+    });
+
+    ros.on('error', function(error) {
+      console.error('Error connecting to websocket server:', error);
+      document.getElementById("status").innerText = "Error: " + error;
+    });
+
+    ros.on('close', function() {
+      console.log('Connection to websocket server closed.');
+      document.getElementById("status").innerText = "Closed";
+    });
+  };
+</script>
+</head>
+
+<body>
+  <h1>Simple ROS User Interface</h1>
+  <p>Connection status: <span id="status">Connecting...</span></p>
+  <p>Counter value: <span id="counter">0</span></p>
+  <p>Range value: <span id="range">0.00</span> meters</p>
+
+  <div class="button-container">
+    <button id="up-button" class="direction-button up-button">↑</button>
+    <button id="left-button" class="direction-button left-button">←</button>
+    <div id="joystick" class="joystick-container"></div>
+    <button id="right-button" class="direction-button right-button">→</button>
+    <button id="down-button" class="direction-button down-button">↓</button>
+  </div>
+</body>
+</html>
+
+
+
+
+
+
+
